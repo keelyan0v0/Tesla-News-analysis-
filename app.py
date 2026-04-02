@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
-from alpaca.data.timeframe import TimeFrame
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from sentence_transformers import SentenceTransformer, util
 
@@ -71,11 +71,11 @@ impact_window = st.selectbox("Impact Window", ["30m","1h","4h","1d"], index=1)
 # MAPS
 # ==============================
 TIMEFRAME_MAP = {
-    "1Min": TimeFrame.Minute,
-    "5Min": TimeFrame.Minute,
-    "15Min": TimeFrame.Minute,
-    "1Hour": TimeFrame.Hour,
-    "1Day": TimeFrame.Day
+    "1Min": TimeFrame(1, TimeFrameUnit.Minute),
+    "5Min": TimeFrame(5, TimeFrameUnit.Minute),
+    "15Min": TimeFrame(15, TimeFrameUnit.Minute),
+    "1Hour": TimeFrame(1, TimeFrameUnit.Hour),
+    "1Day": TimeFrame(1, TimeFrameUnit.Day),
 }
 
 LOOKBACK_MAP = {
@@ -90,22 +90,34 @@ IMPACT_MAP = {
     "4h": timedelta(hours=4),
     "1d": timedelta(days=1),
 }
-
 # ==============================
 # DATA
 # ==============================
 def get_data(symbol, timeframe, lookback_delta):
+
     end = datetime.utcnow()
-    start = end - lookback_delta
+
+    # 🔥 LIMIT DATA BASED ON TIMEFRAME
+    if timeframe == TimeFrame.Minute:
+        start = end - timedelta(days=5)
+    elif timeframe == TimeFrame.Hour:
+        start = end - timedelta(days=30)
+    else:
+        start = end - lookback_delta
 
     request = StockBarsRequest(
         symbol_or_symbols=symbol,
         timeframe=timeframe,
         start=start,
-        end=end
+        end=end,
+        limit=1000  # 🔥 important safety
     )
 
-    bars = client.get_stock_bars(request).df
+    try:
+        bars = client.get_stock_bars(request).df
+    except Exception as e:
+        st.error(f"Alpaca error: {e}")
+        return None
 
     if bars.empty:
         return None
