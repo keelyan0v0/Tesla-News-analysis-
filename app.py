@@ -374,24 +374,26 @@ with side_placeholder:
     st.subheader("📊 Ranked Signals")
 
     if signals:
-        selected_title = st.selectbox(
+        # ==============================
+        # BUILD OPTIONS LIST
+        # ==============================
+        options = [
+            f"{s['time'].strftime('%Y-%m-%d %H:%M')} | {s['title'][:60]}"
+            for s in signals
+        ]
+
+        # ==============================
+        # SELECTBOX
+        # ==============================
+        selected_option = st.selectbox(
             "Select News Signal",
-            options = [
-    f"{s['time'].strftime('%Y-%m-%d %H:%M')} | {s['title'][:60]}"
-    for s in signals
-]
-
-selected_option = st.selectbox(
-    "Select News Signal",
-    options
-)
-
-selected_signal = signals[options.index(selected_option)]
-
-        selected_signal = next(
-            s for s in signals if s["title"] == selected_title
+            options
         )
 
+        # ==============================
+        # GET SELECTED SIGNAL
+        # ==============================
+        selected_signal = signals[options.index(selected_option)]
         # ==============================
         # 📌 SELECTED NEWS DISPLAY
         # ==============================
