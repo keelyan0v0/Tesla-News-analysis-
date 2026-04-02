@@ -4,37 +4,54 @@ import plotly.graph_objects as go
 import feedparser
 import urllib.parse
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
+from sentence_transformers import SentenceTransformer, util
+
 # ==============================
 # CONFIG
 # ==============================
-API_KEY = "PKNNUMQRVO2V5Q7HUKC46GFKVR"
-SECRET_KEY = "CyYqXHDoq2tkrmQDG5Gs1SjdrqJFbAYJ7FUq5gnRTVcM"
+API_KEY = "YOUR_API_KEY"
+SECRET_KEY = "YOUR_SECRET_KEY"
 
 client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 
-import time
+@st.cache_resource
+def load_model():
+    return SentenceTransformer('all-MiniLM-L6-v2')
 
-if "last_update" not in st.session_state:
-    st.session_state.last_update = time.time()
-
-REFRESH_RATE = 2  # seconds
+model = load_model()
 
 # ==============================
-# PAGE CONFIG
+# PROFILES (AI)
+# ==============================
+stock_profile = """
+earnings revenue growth production deliveries demand profit outlook upgrade downgrade
+"""
+
+macro_profile = """
+inflation interest rates federal reserve economy recession oil war geopolitics
+"""
+
+profiles = {
+    "STOCK": model.encode(stock_profile, convert_to_tensor=True),
+    "MACRO": model.encode(macro_profile, convert_to_tensor=True),
+}
+
+# ==============================
+# PAGE
 # ==============================
 st.set_page_config(layout="wide")
-st.title("⚡ Live AI Stock Dashboard (Alpaca)")
+st.title("⚡ AI Stock News Impact Dashboard (Phase 2)")
 
 # ==============================
 # UI
 # ==============================
-col1, col2, col3 = st.columns([2,2,1])
+col1, col2, col3, col4 = st.columns([2,2,2,1])
 
 with col1:
     ticker = st.text_input("Ticker", "TSLA")
@@ -43,10 +60,15 @@ with col2:
     timeframe = st.selectbox("Timeframe", ["1Min","5Min","15Min","1Hour","1Day"])
 
 with col3:
+    lookback = st.selectbox("Lookback", ["1 Day","5 Days","1 Month"], index=1)
+
+with col4:
     live = st.toggle("Live", True)
 
+impact_window = st.selectbox("Impact Window", ["30m","1h","4h","1d"], index=1)
+
 # ==============================
-# TIMEFRAME MAP
+# MAPS
 # ==============================
 TIMEFRAME_MAP = {
     "1Min": TimeFrame.Minute,
@@ -55,6 +77,44 @@ TIMEFRAME_MAP = {
     "1Hour": TimeFrame.Hour,
     "1Day": TimeFrame.Day
 }
+
+LOOKBACK_MAP = {
+    "1 Day": timedelta(days=1),
+    "5 Days": timedelta(days=5),
+    "1 Month": timedelta(days=30),
+}
+
+IMPACT_MAP = {
+    "30m": timedelta(minutes=30),
+    "1h": timedelta(hours=1),
+    "4h": timedelta(hours=4),
+    "1d": timedelta(days=1),
+}
+
+# ==============================
+# DATA
+# ==============================
+def get_data(symbol, timeframe, lookback_delta):
+    end = datetime.utcnow()
+    start = end - lookback_delta
+
+    request = StockBarsRequest(
+        symbol_or_symbols=symbol,
+        timeframe=timeframe,
+        start=start,
+        end=end
+    )
+
+    bars = client.get_stock_bars(request).df
+
+    if bars.empty:
+        return None
+
+    bars = bars.reset_index()
+    bars.rename(columns={"timestamp": "time"}, inplace=True)
+    bars['time'] = pd.to_datetime(bars['time']).dt.tz_localize(None)
+
+    return bars
 
 # ==============================
 # NEWS
@@ -81,33 +141,7 @@ def get_news(query):
 
     return articles
 
-# ==============================
-# GET DATA (ALPACA)
-# ==============================
-def get_data(symbol, timeframe):
-    request = StockBarsRequest(
-        symbol_or_symbols=symbol,
-        timeframe=timeframe,
-        limit=500
-    )
-
-    bars = client.get_stock_bars(request).df
-
-    if bars.empty:
-        return None
-
-    bars = bars.reset_index()
-    bars.rename(columns={"timestamp": "time"}, inplace=True)
-
-    bars['time'] = pd.to_datetime(bars['time']).dt.tz_localize(None)
-
-    return bars
-
-# ==============================
-# FILTER NEWS
-# ==============================
 def filter_news(news, start, end):
-    # Convert dataframe times to timezone-naive
     start = pd.to_datetime(start).tz_localize(None)
     end = pd.to_datetime(end).tz_localize(None)
 
@@ -116,14 +150,43 @@ def filter_news(news, start, end):
     for art in news:
         try:
             t = pd.to_datetime(art["published"]).tz_localize(None)
-
             if start <= t <= end:
                 filtered.append(art)
-
         except:
             continue
 
     return filtered[:30]
+
+# ==============================
+# IMPACT
+# ==============================
+def get_price_at_time(df, target_time):
+    future = df[df['time'] >= target_time]
+    if future.empty:
+        return None
+    return future.iloc[0]['close']
+
+def calculate_impact(df, news_time, delta):
+    base = get_price_at_time(df, news_time)
+    if base is None:
+        return None
+
+    future = get_price_at_time(df, news_time + delta)
+    if future is None:
+        return None
+
+    return (future - base) / base * 100
+
+# ==============================
+# AI SCORING
+# ==============================
+def score_news(title):
+    emb = model.encode(title, convert_to_tensor=True)
+
+    stock_sim = util.cos_sim(profiles["STOCK"], emb).item()
+    macro_sim = util.cos_sim(profiles["MACRO"], emb).item()
+
+    return stock_sim, macro_sim
 
 # ==============================
 # CHART
@@ -138,33 +201,53 @@ def build_chart(df, news):
         name='Price'
     ))
 
-    nx, ny, nt = [], [], []
+    nx, ny, nt, colors = [], [], [], []
+
+    sentiment_total = 0
+    count = 0
 
     for art in news:
-        t = art["published"]
+        t = pd.to_datetime(art["published"])
 
         closest = df.iloc[(df['time'] - t).abs().argsort()[:1]]
 
+        impact = calculate_impact(df, t, IMPACT_MAP[impact_window])
+        stock_sim, macro_sim = score_news(art["title"])
+
+        # AI sentiment score
+        score = stock_sim - macro_sim
+        sentiment_total += score
+        count += 1
+
+        if score > 0:
+            color = "green"
+        else:
+            color = "red"
+
+        if impact is not None:
+            text = f"{art['title']}<br>Impact: {impact:.2f}%<br>Score: {score:.2f}"
+        else:
+            text = f"{art['title']}<br>Impact: N/A<br>Score: {score:.2f}"
+
         nx.append(closest['time'].values[0])
         ny.append(closest['close'].values[0])
-        nt.append(art["title"])
+        nt.append(text)
+        colors.append(color)
 
     fig.add_trace(go.Scatter(
         x=nx,
         y=ny,
         mode='markers',
-        marker=dict(size=10, color='red'),
-        name='News',
+        marker=dict(size=10, color=colors),
         text=nt,
         hovertemplate="<b>%{text}</b><extra></extra>"
     ))
 
-    fig.update_layout(
-        height=600,
-        margin=dict(l=10, r=10, t=40, b=10)
-    )
+    fig.update_layout(height=600)
 
-    return fig
+    avg_sentiment = sentiment_total / count if count > 0 else 0
+
+    return fig, avg_sentiment
 
 # ==============================
 # LAYOUT
@@ -172,16 +255,15 @@ def build_chart(df, news):
 left, right = st.columns([3,1])
 
 chart_placeholder = left.empty()
-news_placeholder = right.empty()
+side_placeholder = right.empty()
 
 # ==============================
-# SINGLE RUN (NO LOOP)
+# RUN
 # ==============================
+df = get_data(ticker, TIMEFRAME_MAP[timeframe], LOOKBACK_MAP[lookback])
 
-df = get_data(ticker, TIMEFRAME_MAP[timeframe])
-
-if df is None or df.empty:
-    chart_placeholder.warning("No data - check ticker")
+if df is None:
+    st.warning("No data")
 else:
     start = df['time'].min()
     end = df['time'].max()
@@ -189,26 +271,35 @@ else:
     news = get_news(f"{ticker} stock")
     news = filter_news(news, start, end)
 
-    fig = build_chart(df, news)
+    fig, sentiment = build_chart(df, news)
 
     with chart_placeholder:
         st.plotly_chart(fig, use_container_width=True)
 
-    with news_placeholder:
-        st.subheader("📰 News in Timeframe")
+    with side_placeholder:
+        st.subheader("🧠 AI Sentiment")
 
-        if news:
-            for art in news[:10]:
-                st.markdown(f"**{art['title']}**")
-                st.caption(art["published"])
-                st.markdown(f"[Read]({art['link']})")
-                st.divider()
+        if sentiment > 0:
+            st.metric("Market Bias", "Bullish")
         else:
-            st.write("No news in this timeframe")
+            st.metric("Market Bias", "Bearish")
+
+        st.metric("Score", round(sentiment, 3))
+
+        st.subheader("📰 News")
+
+        for art in news[:10]:
+            st.markdown(f"**{art['title']}**")
+            st.caption(art["published"])
+            st.markdown(f"[Read]({art['link']})")
+            st.divider()
 
 # ==============================
-# AUTO REFRESH
+# REFRESH
 # ==============================
-if live and (time.time() - st.session_state.last_update > REFRESH_RATE):
+if "last_update" not in st.session_state:
+    st.session_state.last_update = time.time()
+
+if live and (time.time() - st.session_state.last_update > 3):
     st.session_state.last_update = time.time()
     st.rerun()
