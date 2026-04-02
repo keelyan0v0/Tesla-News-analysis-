@@ -4,8 +4,52 @@ import pandas as pd
 import feedparser
 import urllib.parse
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
+
+from sentence_transformers import SentenceTransformer, util
+
+# ==============================
+# LOAD MODEL (CACHED)
+# ==============================
+@st.cache_resource
+def load_model():
+    return SentenceTransformer('all-MiniLM-L6-v2')
+
+model = load_model()
+
+# ==============================
+# PROFILES
+# ==============================
+tesla_profile = """
+Tesla electric vehicles EV battery production deliveries earnings revenue Elon Musk
+autonomous driving FSD robotaxi competition EV demand pricing
+"""
+
+macro_profile = """
+global economy inflation interest rates federal reserve oil prices war geopolitics recession
+economic slowdown macroeconomic environment risk sentiment
+"""
+
+market_profile = """
+stock market S&P 500 Nasdaq rally selloff volatility risk-on risk-off investor sentiment
+equity markets tech stocks movement
+"""
+
+profiles = {
+    "TESLA": model.encode(tesla_profile, convert_to_tensor=True),
+    "MACRO": model.encode(macro_profile, convert_to_tensor=True),
+    "MARKET": model.encode(market_profile, convert_to_tensor=True)
+}
+
+# ==============================
+# IMPACT WINDOWS
+# ==============================
+IMPACT_WINDOWS = {
+    "1h": timedelta(hours=1),
+    "4h": timedelta(hours=4),
+    "1d": timedelta(days=1)
+}
 
 # ==============================
 # PAGE CONFIG
@@ -14,7 +58,7 @@ st.set_page_config(layout="wide")
 st.title("📈 Stock News Impact Analyzer")
 
 # ==============================
-# SIDEBAR CONTROLS
+# SIDEBAR
 # ==============================
 ticker = st.sidebar.text_input("Ticker", "TSLA")
 
@@ -50,16 +94,11 @@ def get_news_rss(query):
     url = f"https://news.google.com/rss/search?q={encoded_query}"
     feed = feedparser.parse(url)
 
-    articles = []
-
-    for entry in feed.entries:
-        articles.append({
-            "title": entry.title,
-            "link": entry.link,
-            "published": entry.published
-        })
-
-    return articles
+    return [{
+        "title": entry.title,
+        "link": entry.link,
+        "published": entry.published
+    } for entry in feed.entries]
 
 
 def get_yahoo_news(ticker):
@@ -71,7 +110,6 @@ def get_yahoo_news(ticker):
     for item in news:
         try:
             dt = datetime.utcfromtimestamp(item["providerPublishTime"])
-
             articles.append({
                 "title": item["title"],
                 "link": item["link"],
@@ -86,9 +124,39 @@ def get_yahoo_news(ticker):
 def parse_time(time_str):
     return datetime.strptime(time_str, "%a, %d %b %Y %H:%M:%S %Z")
 
+# ==============================
+# PRICE FUNCTIONS
+# ==============================
+def get_price_after_time(data, time_col, target_time):
+    future_data = data[data[time_col] >= target_time]
+
+    if future_data.empty:
+        return None
+
+    return future_data.iloc[0]["Close"]
+
+
+def calculate_impact(data, time_col, news_time):
+    base_price = get_price_after_time(data, time_col, news_time)
+
+    if base_price is None:
+        return None
+
+    impacts = {}
+
+    for label, delta in IMPACT_WINDOWS.items():
+        future_time = news_time + delta
+        future_price = get_price_after_time(data, time_col, future_time)
+
+        if future_price is None:
+            impacts[label] = None
+        else:
+            impacts[label] = (future_price - base_price) / base_price * 100
+
+    return impacts
 
 # ==============================
-# LOAD DATA
+# LOAD PRICE DATA
 # ==============================
 data = yf.download(ticker, period=period, interval=interval)
 
@@ -122,13 +190,13 @@ fig.add_trace(go.Scatter(
 ))
 
 # ==============================
-# ADD NEWS MARKERS
+# NEWS MARKERS
 # ==============================
 news_x = []
 news_y = []
 news_text = []
 
-for art in articles[:50]:  # limit for performance
+for art in articles[:50]:
     try:
         if isinstance(art["published"], str):
             news_time = parse_time(art["published"])
@@ -137,11 +205,9 @@ for art in articles[:50]:  # limit for performance
 
         news_time = pd.to_datetime(news_time).tz_localize(None)
 
-        # Skip out-of-range news
         if news_time < data[time_col].min() or news_time > data[time_col].max():
             continue
 
-        # Find closest price
         closest = data.iloc[(data[time_col] - news_time).abs().argsort()[:1]]
 
         news_x.append(closest[time_col].values[0])
@@ -151,7 +217,6 @@ for art in articles[:50]:  # limit for performance
     except:
         continue
 
-# ADD MARKERS
 fig.add_trace(go.Scatter(
     x=news_x,
     y=news_y,
@@ -172,10 +237,7 @@ st.plotly_chart(fig, use_container_width=True)
 st.subheader("📰 Select Article")
 
 if news_text:
-    selected_title = st.selectbox(
-        "Choose article from chart",
-        news_text
-    )
+    selected_title = st.selectbox("Choose article", news_text)
 
     selected_article = next(
         (art for art in articles if art["title"] == selected_title),
@@ -183,8 +245,48 @@ if news_text:
     )
 
     if selected_article:
-        st.subheader("🧠 Article Details")
+        st.subheader("🧠 Article Analysis")
+
         st.write("**Title:**", selected_article["title"])
         st.write(f"🔗 [Read full article]({selected_article['link']})")
+
+        # TIME
+        try:
+            if isinstance(selected_article["published"], str):
+                news_time = parse_time(selected_article["published"])
+            else:
+                news_time = selected_article["published"]
+
+            news_time = pd.to_datetime(news_time).tz_localize(None)
+        except:
+            st.write("Time parsing failed")
+            news_time = None
+
+        # AI CLASSIFICATION
+        if news_time is not None:
+            embedding = model.encode(selected_article["title"], convert_to_tensor=True)
+
+            scores = {}
+            for key, emb in profiles.items():
+                scores[key] = util.cos_sim(emb, embedding).item()
+
+            best_category = max(scores, key=scores.get)
+            best_score = scores[best_category]
+
+            st.write(f"**Category:** {best_category} ({round(best_score,2)})")
+
+            # IMPACT
+            impact = calculate_impact(data, time_col, news_time)
+
+            st.write("### 📊 Impact")
+
+            if impact:
+                for k, v in impact.items():
+                    if v is not None:
+                        st.write(f"{k}: {v:.3f}%")
+                    else:
+                        st.write(f"{k}: No data")
+            else:
+                st.write("No price data available")
 else:
-    st.write("No news in selected timeframe")
+    st.write("No news found")
