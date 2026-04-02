@@ -1,5 +1,4 @@
 import streamlit as st
-import MetaTrader5 as mt5
 import pandas as pd
 import plotly.graph_objects as go
 import feedparser
@@ -7,21 +6,26 @@ import urllib.parse
 import time
 from datetime import datetime
 
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+
+# ==============================
+# CONFIG
+# ==============================
+API_KEY = "PKNNUMQRVO2V5Q7HUKC46GFKVR"
+SECRET_KEY = "CyYqXHDoq2tkrmQDG5Gs1SjdrqJFbAYJ7FUq5gnRTVcM"
+
+client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+
 # ==============================
 # PAGE CONFIG
 # ==============================
 st.set_page_config(layout="wide")
-st.title("⚡ Live AI Stock Dashboard (Phase 1)")
+st.title("⚡ Live AI Stock Dashboard (Alpaca)")
 
 # ==============================
-# MT5 INIT
-# ==============================
-if not mt5.initialize():
-    st.error("MT5 failed to initialize")
-    st.stop()
-
-# ==============================
-# UI TOP BAR
+# UI
 # ==============================
 col1, col2, col3 = st.columns([2,2,1])
 
@@ -29,7 +33,7 @@ with col1:
     ticker = st.text_input("Ticker", "TSLA")
 
 with col2:
-    timeframe = st.selectbox("Timeframe", ["1m","5m","15m","1h","1d"])
+    timeframe = st.selectbox("Timeframe", ["1Min","5Min","15Min","1Hour","1Day"])
 
 with col3:
     live = st.toggle("Live", True)
@@ -38,15 +42,15 @@ with col3:
 # TIMEFRAME MAP
 # ==============================
 TIMEFRAME_MAP = {
-    "1m": mt5.TIMEFRAME_M1,
-    "5m": mt5.TIMEFRAME_M5,
-    "15m": mt5.TIMEFRAME_M15,
-    "1h": mt5.TIMEFRAME_H1,
-    "1d": mt5.TIMEFRAME_D1
+    "1Min": TimeFrame.Minute,
+    "5Min": TimeFrame.Minute,
+    "15Min": TimeFrame.Minute,
+    "1Hour": TimeFrame.Hour,
+    "1Day": TimeFrame.Day
 }
 
 # ==============================
-# NEWS FUNCTION
+# NEWS
 # ==============================
 def get_news(query):
     encoded = urllib.parse.quote(query)
@@ -71,35 +75,40 @@ def get_news(query):
     return articles
 
 # ==============================
-# GET MT5 DATA
+# GET DATA (ALPACA)
 # ==============================
 def get_data(symbol, timeframe):
-    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 500)
+    request = StockBarsRequest(
+        symbol_or_symbols=symbol,
+        timeframe=timeframe,
+        limit=500
+    )
 
-    if rates is None:
+    bars = client.get_stock_bars(request).df
+
+    if bars.empty:
         return None
 
-    df = pd.DataFrame(rates)
-    df['time'] = pd.to_datetime(df['time'], unit='s')
-    return df
+    bars = bars.reset_index()
+    bars.rename(columns={"timestamp": "time"}, inplace=True)
+
+    return bars
 
 # ==============================
-# FILTER NEWS BY TIME
+# FILTER NEWS
 # ==============================
 def filter_news(news, start, end):
-    filtered = []
-    for art in news:
-        if start <= art["published"] <= end:
-            filtered.append(art)
-    return filtered[:30]
+    return [
+        art for art in news
+        if start <= art["published"] <= end
+    ][:30]
 
 # ==============================
-# BUILD CHART
+# CHART
 # ==============================
 def build_chart(df, news):
     fig = go.Figure()
 
-    # PRICE
     fig.add_trace(go.Scatter(
         x=df['time'],
         y=df['close'],
@@ -107,7 +116,6 @@ def build_chart(df, news):
         name='Price'
     ))
 
-    # NEWS
     nx, ny, nt = [], [], []
 
     for art in news:
@@ -137,7 +145,7 @@ def build_chart(df, news):
     return fig
 
 # ==============================
-# MAIN LAYOUT
+# LAYOUT
 # ==============================
 left, right = st.columns([3,1])
 
@@ -152,7 +160,7 @@ while True:
     df = get_data(ticker, TIMEFRAME_MAP[timeframe])
 
     if df is None or df.empty:
-        chart_placeholder.warning("No data - check symbol name (e.g. TSLA.US)")
+        chart_placeholder.warning("No data - check ticker")
         time.sleep(2)
         continue
 
@@ -164,11 +172,9 @@ while True:
 
     fig = build_chart(df, news)
 
-    # UPDATE CHART
     with chart_placeholder:
         st.plotly_chart(fig, use_container_width=True)
 
-    # UPDATE NEWS PANEL
     with news_placeholder:
         st.subheader("📰 News in Timeframe")
 
