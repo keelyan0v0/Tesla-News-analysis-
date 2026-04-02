@@ -81,7 +81,10 @@ TIMEFRAME_MAP = {
 LOOKBACK_MAP = {
     "1 Day": timedelta(days=1),
     "5 Days": timedelta(days=5),
+    "1 Week": timedelta(days=7),
+    "2 Weeks": timedelta(days=14),
     "1 Month": timedelta(days=30),
+    "6 Month": timedelta(days=180),
 }
 
 IMPACT_MAP = {
