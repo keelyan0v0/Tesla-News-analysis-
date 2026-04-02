@@ -5,4 +5,4 @@ feedparser
 sentence-transformers
 plotly
 tqdm
-MetaTrader5
+alpaca-py
