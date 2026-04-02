@@ -360,38 +360,53 @@ else:
     with chart_placeholder:
         st.plotly_chart(fig, use_container_width=True)
 
-    with side_placeholder:
-        st.subheader("📊 Ranked Signals")
+    selected_signal = None  # 🔥 IMPORTANT FIX (used later)
 
-        if signals:
-            selected_title = st.selectbox(
-                "Select News Signal",
-                [s["title"] for s in signals]
-            )
+with side_placeholder:
+    st.subheader("📊 Ranked Signals")
 
-            selected_signal = next(
-                s for s in signals if s["title"] == selected_title
-            )
+    if signals:
+        selected_title = st.selectbox(
+            "Select News Signal",
+            [s["title"] for s in signals]
+        )
 
-            st.metric("Impact (%)", f"{selected_signal['impact']:.2f}%")
-            st.metric("AI Score", f"{selected_signal['score']:.2f}")
-            st.metric("Signal Strength", f"{selected_signal['strength']:.2f}")
+        selected_signal = next(
+            s for s in signals if s["title"] == selected_title
+        )
 
-            st.markdown(f"[Read Article]({selected_signal['link']})")
+        # ==============================
+        # 📌 SELECTED NEWS DISPLAY
+        # ==============================
+        st.write("### 📌 Selected News")
+        st.write(selected_signal["title"])
+        st.caption(selected_signal["time"])
 
-        st.subheader("🧠 AI Sentiment")
-
-        if sentiment > 0:
-            st.metric("Market Bias", "Bullish")
+        # ==============================
+        # 🎨 COLOUR + METRICS
+        # ==============================
+        if selected_signal["impact"] > 0:
+            impact_color = "green"
+            sentiment_label = "Bullish"
         else:
-            st.metric("Market Bias", "Bearish")
+            impact_color = "red"
+            sentiment_label = "Bearish"
+
+        st.metric("Impact (%)", f"{selected_signal['impact']:.2f}%")
+        st.metric("AI Score", f"{selected_signal['score']:.2f}")
+        st.metric("Signal Strength", f"{selected_signal['strength']:.2f}")
+
+        st.markdown(f"**Sentiment:** :{impact_color}[{sentiment_label}]")
+
+        st.markdown(f"[Read Article]({selected_signal['link']})")
 
 # ==============================
 # SECOND GRAPH
 # ==============================
-st.subheader("📈 News Impact Breakdown")
+st.subheader("📈 News Impact Breakdown ($)")
 
 if df is not None and signals:
+
     news_time = selected_signal["time"]
 
     result = build_price_evolution(
@@ -403,23 +418,41 @@ if df is not None and signals:
     if result:
         times, prices, base_price = result
 
+        # ✅ THIS IS YOUR $ CHANGE
         changes = [(p - base_price) for p in prices]
 
+        # ==============================
+        # GRAPH
+        # ==============================
         fig2 = go.Figure()
 
         fig2.add_trace(go.Scatter(
             x=times,
             y=changes,
-            mode='lines+markers'
+            mode='lines+markers',
+            name='Price Change ($)'
         ))
 
         fig2.update_layout(
             height=400,
-            yaxis_title="Price Change ($)"
+            title="Price Movement After Selected News",
+            yaxis_title="Change ($)"
         )
 
         st.plotly_chart(fig2, use_container_width=True)
 
+        # ==============================
+        # TABLE (VERY IMPORTANT)
+        # ==============================
+        st.subheader("💰 Price Change Breakdown")
+
+        df_changes = pd.DataFrame({
+            "Time": times,
+            "Price ($)": prices,
+            "Change ($)": changes
+        })
+
+        st.dataframe(df_changes)
 # ==============================
 # REFRESH
 # ==============================
