@@ -381,10 +381,12 @@ with side_placeholder:
     for s in signals
 ]
 
-selected_option = st.selectbox("Select News Signal", options)
+selected_option = st.selectbox(
+    "Select News Signal",
+    options
+)
 
-selected_signal = signals[options.index(selected_option)
-]
+selected_signal = signals[options.index(selected_option)]
 
         selected_signal = next(
             s for s in signals if s["title"] == selected_title
