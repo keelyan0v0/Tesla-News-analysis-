@@ -286,12 +286,12 @@ def build_chart(df, news):
     ))
 if 'selected_signal' in globals() and selected_signal:
     fig.add_trace(go.Scatter(
-        x=[selected_signal["time"]],
-        y=[get_price_at_time(df, selected_signal["time"])],
-        mode='markers',
-        marker=dict(size=14, color='yellow'),
-        name='Selected News'
-    ))
+    x=[selected_time],
+    y=[selected_price],
+    mode='markers',
+    marker=dict(size=14, color='yellow'),
+    name='Selected News'
+))
     nx, ny, nt, colors = [], [], [], []
 
     sentiment_total = 0
