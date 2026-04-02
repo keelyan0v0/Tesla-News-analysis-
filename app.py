@@ -18,6 +18,13 @@ SECRET_KEY = "CyYqXHDoq2tkrmQDG5Gs1SjdrqJFbAYJ7FUq5gnRTVcM"
 
 client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 
+import time
+
+if "last_update" not in st.session_state:
+    st.session_state.last_update = time.time()
+
+REFRESH_RATE = 2  # seconds
+
 # ==============================
 # PAGE CONFIG
 # ==============================
@@ -168,17 +175,14 @@ chart_placeholder = left.empty()
 news_placeholder = right.empty()
 
 # ==============================
-# LIVE LOOP
+# SINGLE RUN (NO LOOP)
 # ==============================
-while True:
 
-    df = get_data(ticker, TIMEFRAME_MAP[timeframe])
+df = get_data(ticker, TIMEFRAME_MAP[timeframe])
 
-    if df is None or df.empty:
-        chart_placeholder.warning("No data - check ticker")
-        time.sleep(2)
-        continue
-
+if df is None or df.empty:
+    chart_placeholder.warning("No data - check ticker")
+else:
     start = df['time'].min()
     end = df['time'].max()
 
@@ -202,7 +206,9 @@ while True:
         else:
             st.write("No news in this timeframe")
 
-    if not live:
-        break
-
-    time.sleep(2)
+# ==============================
+# AUTO REFRESH
+# ==============================
+if live and (time.time() - st.session_state.last_update > REFRESH_RATE):
+    st.session_state.last_update = time.time()
+    st.rerun()
