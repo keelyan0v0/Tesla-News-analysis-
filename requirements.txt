@@ -1,0 +1,7 @@
+streamlit
+yfinance
+pandas
+feedparser
+sentence-transformers
+plotly
+tqdm
