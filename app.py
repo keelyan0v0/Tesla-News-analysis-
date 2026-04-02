@@ -278,20 +278,35 @@ def score_news(title):
 def build_chart(df, news):
     fig = go.Figure()
 
+    # ==============================
+    # PRICE LINE
+    # ==============================
     fig.add_trace(go.Scatter(
         x=df['time'],
         y=df['close'],
         mode='lines',
         name='Price'
     ))
-if 'selected_signal' in globals() and selected_signal:
-    fig.add_trace(go.Scatter(
-    x=[selected_time],
-    y=[selected_price],
-    mode='markers',
-    marker=dict(size=14, color='yellow'),
-    name='Selected News'
-))
+
+    # ==============================
+    # 🔥 HIGHLIGHT SELECTED NEWS
+    # ==============================
+    if 'selected_signal' in globals() and selected_signal:
+        selected_time = selected_signal["time"]
+        selected_price = get_price_at_time(df, selected_time)
+
+        if selected_price is not None:
+            fig.add_trace(go.Scatter(
+                x=[selected_time],
+                y=[selected_price],
+                mode='markers',
+                marker=dict(size=14, color='yellow'),
+                name='Selected News'
+            ))
+
+    # ==============================
+    # NEWS MARKERS
+    # ==============================
     nx, ny, nt, colors = [], [], [], []
 
     sentiment_total = 0
@@ -305,7 +320,6 @@ if 'selected_signal' in globals() and selected_signal:
         impact = calculate_impact(df, t, IMPACT_MAP[impact_window])
         stock_sim, macro_sim = score_news(art["title"])
 
-        # AI sentiment score
         score = stock_sim - macro_sim
         sentiment_total += score
         count += 1
@@ -339,7 +353,6 @@ if 'selected_signal' in globals() and selected_signal:
     avg_sentiment = sentiment_total / count if count > 0 else 0
 
     return fig, avg_sentiment
-
 # ==============================
 # LAYOUT
 # ==============================
