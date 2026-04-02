@@ -5,3 +5,4 @@ feedparser
 sentence-transformers
 plotly
 tqdm
+MetaTrader5
