@@ -60,7 +60,7 @@ with col2:
     timeframe = st.selectbox("Timeframe", ["1Min","5Min","15Min","1Hour","1Day"])
 
 with col3:
-    lookback = st.selectbox("Lookback", ["1 Day","5 Days","1 Month"], index=1)
+    lookback = st.selectbox("Lookback", ["1 Day","5 Days","1 Week","2 Weeks","1 Month","6 Month"], index=1)
 
 with col4:
     live = st.toggle("Live", True)
