@@ -159,88 +159,7 @@ def build_price_evolution(df, news_time, interval, steps=6):
 
     return times, prices, base_price
 
-# ==============================
-# RUN (REPLACE YOUR RUN BLOCK)
-# ==============================
-df = get_data(ticker, TIMEFRAME_MAP[timeframe], LOOKBACK_MAP[lookback])
 
-if df is None:
-    st.warning("No data")
-else:
-    start = df['time'].min()
-    end = df['time'].max()
-
-    news = get_news(f"{ticker} stock")
-    news = filter_news(news, start, end)
-
-    fig, sentiment = build_chart(df, news)
-
-    signals = build_signals(df, news)
-
-    with chart_placeholder:
-        st.plotly_chart(fig, use_container_width=True)
-
-    with side_placeholder:
-        st.subheader("📊 Ranked Signals")
-
-        if signals:
-            selected_title = st.selectbox(
-                "Select News Signal",
-                [s["title"] for s in signals]
-            )
-
-            selected_signal = next(
-                s for s in signals if s["title"] == selected_title
-            )
-
-            st.metric("Impact (%)", f"{selected_signal['impact']:.2f}%")
-            st.metric("AI Score", f"{selected_signal['score']:.2f}")
-            st.metric("Signal Strength", f"{selected_signal['strength']:.2f}")
-
-            st.markdown(f"[Read Article]({selected_signal['link']})")
-
-        st.subheader("🧠 AI Sentiment")
-
-        if sentiment > 0:
-            st.metric("Market Bias", "Bullish")
-        else:
-            st.metric("Market Bias", "Bearish")
-
-# ==============================
-# SECOND GRAPH (ADD BELOW MAIN)
-# ==============================
-st.subheader("📈 News Impact Breakdown")
-
-if df is not None and signals:
-    news_time = selected_signal["time"]
-
-    result = build_price_evolution(
-        df,
-        news_time,
-        INTERVAL_MAP[interval_choice]
-    )
-
-    if result:
-        times, prices, base_price = result
-
-        changes = [(p - base_price) for p in prices]
-
-        fig2 = go.Figure()
-
-        fig2.add_trace(go.Scatter(
-            x=times,
-            y=changes,
-            mode='lines+markers',
-            name='Price Change ($)'
-        ))
-
-        fig2.update_layout(
-            height=400,
-            yaxis_title="Price Change ($)",
-            title="Post-News Price Movement"
-        )
-
-        st.plotly_chart(fig2, use_container_width=True)
 # ==============================
 # DATA
 # ==============================
@@ -436,11 +355,30 @@ else:
     news = filter_news(news, start, end)
 
     fig, sentiment = build_chart(df, news)
+    signals = build_signals(df, news)
 
     with chart_placeholder:
         st.plotly_chart(fig, use_container_width=True)
 
     with side_placeholder:
+        st.subheader("📊 Ranked Signals")
+
+        if signals:
+            selected_title = st.selectbox(
+                "Select News Signal",
+                [s["title"] for s in signals]
+            )
+
+            selected_signal = next(
+                s for s in signals if s["title"] == selected_title
+            )
+
+            st.metric("Impact (%)", f"{selected_signal['impact']:.2f}%")
+            st.metric("AI Score", f"{selected_signal['score']:.2f}")
+            st.metric("Signal Strength", f"{selected_signal['strength']:.2f}")
+
+            st.markdown(f"[Read Article]({selected_signal['link']})")
+
         st.subheader("🧠 AI Sentiment")
 
         if sentiment > 0:
@@ -448,15 +386,39 @@ else:
         else:
             st.metric("Market Bias", "Bearish")
 
-        st.metric("Score", round(sentiment, 3))
+# ==============================
+# SECOND GRAPH
+# ==============================
+st.subheader("📈 News Impact Breakdown")
 
-        st.subheader("📰 News")
+if df is not None and signals:
+    news_time = selected_signal["time"]
 
-        for art in news[:10]:
-            st.markdown(f"**{art['title']}**")
-            st.caption(art["published"])
-            st.markdown(f"[Read]({art['link']})")
-            st.divider()
+    result = build_price_evolution(
+        df,
+        news_time,
+        INTERVAL_MAP[interval_choice]
+    )
+
+    if result:
+        times, prices, base_price = result
+
+        changes = [(p - base_price) for p in prices]
+
+        fig2 = go.Figure()
+
+        fig2.add_trace(go.Scatter(
+            x=times,
+            y=changes,
+            mode='lines+markers'
+        ))
+
+        fig2.update_layout(
+            height=400,
+            yaxis_title="Price Change ($)"
+        )
+
+        st.plotly_chart(fig2, use_container_width=True)
 
 # ==============================
 # REFRESH
