@@ -96,15 +96,16 @@ IMPACT_MAP = {
 
 interval_choice = st.selectbox(
     "Analysis Interval",
-    ["10m", "30m"],
+    ["5m","10m", "15m","30m"],
     index=0
 )
 
 INTERVAL_MAP = {
+    "5m": timedelta(minutes=5),
     "10m": timedelta(minutes=10),
+    "15m": timedelta(minutes=15),
     "30m": timedelta(minutes=30)
 }
-
 # ==============================
 # SIGNAL BUILDER
 # ==============================
@@ -138,7 +139,7 @@ def build_signals(df, news):
 # ==============================
 # PRICE EVOLUTION
 # ==============================
-def build_price_evolution(df, news_time, interval, steps=6):
+def build_price_evolution(df, news_time, interval, steps=12):
     times = []
     prices = []
 
@@ -283,7 +284,14 @@ def build_chart(df, news):
         mode='lines',
         name='Price'
     ))
-
+if 'selected_signal' in globals() and selected_signal:
+    fig.add_trace(go.Scatter(
+        x=[selected_signal["time"]],
+        y=[get_price_at_time(df, selected_signal["time"])],
+        mode='markers',
+        marker=dict(size=14, color='yellow'),
+        name='Selected News'
+    ))
     nx, ny, nt, colors = [], [], [], []
 
     sentiment_total = 0
@@ -368,7 +376,14 @@ with side_placeholder:
     if signals:
         selected_title = st.selectbox(
             "Select News Signal",
-            [s["title"] for s in signals]
+            options = [
+    f"{s['time'].strftime('%Y-%m-%d %H:%M')} | {s['title'][:60]}"
+    for s in signals
+]
+
+selected_option = st.selectbox("Select News Signal", options)
+
+selected_signal = signals[options.index(selected_option)
         )
 
         selected_signal = next(
