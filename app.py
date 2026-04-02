@@ -1,292 +1,187 @@
 import streamlit as st
-import yfinance as yf
+import MetaTrader5 as mt5
 import pandas as pd
+import plotly.graph_objects as go
 import feedparser
 import urllib.parse
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
 import time
-
-from sentence_transformers import SentenceTransformer, util
-
-# ==============================
-# LOAD MODEL (CACHED)
-# ==============================
-@st.cache_resource
-def load_model():
-    return SentenceTransformer('all-MiniLM-L6-v2')
-
-model = load_model()
-
-# ==============================
-# PROFILES
-# ==============================
-tesla_profile = """
-Tesla electric vehicles EV battery production deliveries earnings revenue Elon Musk
-autonomous driving FSD robotaxi competition EV demand pricing
-"""
-
-macro_profile = """
-global economy inflation interest rates federal reserve oil prices war geopolitics recession
-economic slowdown macroeconomic environment risk sentiment
-"""
-
-market_profile = """
-stock market S&P 500 Nasdaq rally selloff volatility risk-on risk-off investor sentiment
-equity markets tech stocks movement
-"""
-
-profiles = {
-    "TESLA": model.encode(tesla_profile, convert_to_tensor=True),
-    "MACRO": model.encode(macro_profile, convert_to_tensor=True),
-    "MARKET": model.encode(market_profile, convert_to_tensor=True)
-}
-
-# ==============================
-# IMPACT WINDOWS
-# ==============================
-IMPACT_WINDOWS = {
-    "1h": timedelta(hours=1),
-    "4h": timedelta(hours=4),
-    "1d": timedelta(days=1)
-}
+from datetime import datetime
 
 # ==============================
 # PAGE CONFIG
 # ==============================
 st.set_page_config(layout="wide")
-st.title("📈 Stock News Impact Analyzer")
+st.title("⚡ Live AI Stock Dashboard (Phase 1)")
 
 # ==============================
-# SIDEBAR
+# MT5 INIT
 # ==============================
-ticker = st.sidebar.text_input("Ticker", "TSLA")
-
-period = st.sidebar.selectbox(
-    "Timeframe",
-    ["1d", "5d", "1mo", "3mo", "6mo", "1y"],
-    index=1
-)
-
-interval = st.sidebar.selectbox(
-    "Interval",
-    ["1m", "5m", "15m", "1h", "1d"],
-    index=2
-)
-
-refresh_rate = st.sidebar.slider("Auto Refresh (seconds)", 5, 60, 15)
+if not mt5.initialize():
+    st.error("MT5 failed to initialize")
+    st.stop()
 
 # ==============================
-# AUTO REFRESH
+# UI TOP BAR
 # ==============================
-if "last_refresh" not in st.session_state:
-    st.session_state.last_refresh = time.time()
+col1, col2, col3 = st.columns([2,2,1])
 
-if time.time() - st.session_state.last_refresh > refresh_rate:
-    st.session_state.last_refresh = time.time()
-    st.rerun()
+with col1:
+    ticker = st.text_input("Ticker", "TSLA")
+
+with col2:
+    timeframe = st.selectbox("Timeframe", ["1m","5m","15m","1h","1d"])
+
+with col3:
+    live = st.toggle("Live", True)
 
 # ==============================
-# NEWS FUNCTIONS
+# TIMEFRAME MAP
 # ==============================
-def get_news_rss(query):
-    encoded_query = urllib.parse.quote(query)
-    url = f"https://news.google.com/rss/search?q={encoded_query}"
+TIMEFRAME_MAP = {
+    "1m": mt5.TIMEFRAME_M1,
+    "5m": mt5.TIMEFRAME_M5,
+    "15m": mt5.TIMEFRAME_M15,
+    "1h": mt5.TIMEFRAME_H1,
+    "1d": mt5.TIMEFRAME_D1
+}
+
+# ==============================
+# NEWS FUNCTION
+# ==============================
+def get_news(query):
+    encoded = urllib.parse.quote(query)
+    url = f"https://news.google.com/rss/search?q={encoded}"
     feed = feedparser.parse(url)
-
-    return [{
-        "title": entry.title,
-        "link": entry.link,
-        "published": entry.published
-    } for entry in feed.entries]
-
-
-def get_yahoo_news(ticker):
-    stock = yf.Ticker(ticker)
-    news = stock.news or []
 
     articles = []
 
-    for item in news:
+    for entry in feed.entries:
         try:
-            dt = datetime.utcfromtimestamp(item["providerPublishTime"])
+            published = datetime.strptime(
+                entry.published, "%a, %d %b %Y %H:%M:%S %Z"
+            )
             articles.append({
-                "title": item["title"],
-                "link": item["link"],
-                "published": dt
+                "title": entry.title,
+                "link": entry.link,
+                "published": published
             })
         except:
             continue
 
     return articles
 
-
-def parse_time(time_str):
-    return datetime.strptime(time_str, "%a, %d %b %Y %H:%M:%S %Z")
-
 # ==============================
-# PRICE FUNCTIONS
+# GET MT5 DATA
 # ==============================
-def get_price_after_time(data, time_col, target_time):
-    future_data = data[data[time_col] >= target_time]
+def get_data(symbol, timeframe):
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 500)
 
-    if future_data.empty:
+    if rates is None:
         return None
 
-    return future_data.iloc[0]["Close"]
-
-
-def calculate_impact(data, time_col, news_time):
-    base_price = get_price_after_time(data, time_col, news_time)
-
-    if base_price is None:
-        return None
-
-    impacts = {}
-
-    for label, delta in IMPACT_WINDOWS.items():
-        future_time = news_time + delta
-        future_price = get_price_after_time(data, time_col, future_time)
-
-        if future_price is None:
-            impacts[label] = None
-        else:
-            impacts[label] = (future_price - base_price) / base_price * 100
-
-    return impacts
+    df = pd.DataFrame(rates)
+    df['time'] = pd.to_datetime(df['time'], unit='s')
+    return df
 
 # ==============================
-# LOAD PRICE DATA
+# FILTER NEWS BY TIME
 # ==============================
-data = yf.download(ticker, period=period, interval=interval)
-
-if isinstance(data.columns, pd.MultiIndex):
-    data.columns = [col[0] for col in data.columns]
-
-data = data.reset_index()
-
-time_col = "Datetime" if "Datetime" in data.columns else "Date"
-data[time_col] = pd.to_datetime(data[time_col]).dt.tz_localize(None)
-
-# ==============================
-# GET NEWS
-# ==============================
-rss_articles = get_news_rss(f"{ticker} OR stock market OR economy")
-yahoo_articles = get_yahoo_news(ticker)
-
-articles = rss_articles + yahoo_articles
+def filter_news(news, start, end):
+    filtered = []
+    for art in news:
+        if start <= art["published"] <= end:
+            filtered.append(art)
+    return filtered[:30]
 
 # ==============================
 # BUILD CHART
 # ==============================
-fig = go.Figure()
+def build_chart(df, news):
+    fig = go.Figure()
 
-# PRICE LINE
-fig.add_trace(go.Scatter(
-    x=data[time_col],
-    y=data["Close"],
-    mode='lines',
-    name='Price'
-))
+    # PRICE
+    fig.add_trace(go.Scatter(
+        x=df['time'],
+        y=df['close'],
+        mode='lines',
+        name='Price'
+    ))
 
-# ==============================
-# NEWS MARKERS
-# ==============================
-news_x = []
-news_y = []
-news_text = []
+    # NEWS
+    nx, ny, nt = [], [], []
 
-for art in articles[:50]:
-    try:
-        if isinstance(art["published"], str):
-            news_time = parse_time(art["published"])
-        else:
-            news_time = art["published"]
+    for art in news:
+        t = art["published"]
 
-        news_time = pd.to_datetime(news_time).tz_localize(None)
+        closest = df.iloc[(df['time'] - t).abs().argsort()[:1]]
 
-        if news_time < data[time_col].min() or news_time > data[time_col].max():
-            continue
+        nx.append(closest['time'].values[0])
+        ny.append(closest['close'].values[0])
+        nt.append(art["title"])
 
-        closest = data.iloc[(data[time_col] - news_time).abs().argsort()[:1]]
+    fig.add_trace(go.Scatter(
+        x=nx,
+        y=ny,
+        mode='markers',
+        marker=dict(size=10, color='red'),
+        name='News',
+        text=nt,
+        hovertemplate="<b>%{text}</b><extra></extra>"
+    ))
 
-        news_x.append(closest[time_col].values[0])
-        news_y.append(closest["Close"].values[0])
-        news_text.append(art["title"])
-
-    except:
-        continue
-
-fig.add_trace(go.Scatter(
-    x=news_x,
-    y=news_y,
-    mode='markers',
-    marker=dict(size=10, color='red'),
-    name='News',
-    text=news_text,
-    hovertemplate="<b>%{text}</b><extra></extra>"
-))
-
-fig.update_layout(height=600)
-
-st.plotly_chart(fig, use_container_width=True)
-
-# ==============================
-# ARTICLE SELECTOR
-# ==============================
-st.subheader("📰 Select Article")
-
-if news_text:
-    selected_title = st.selectbox("Choose article", news_text)
-
-    selected_article = next(
-        (art for art in articles if art["title"] == selected_title),
-        None
+    fig.update_layout(
+        height=600,
+        margin=dict(l=10, r=10, t=40, b=10)
     )
 
-    if selected_article:
-        st.subheader("🧠 Article Analysis")
+    return fig
 
-        st.write("**Title:**", selected_article["title"])
-        st.write(f"🔗 [Read full article]({selected_article['link']})")
+# ==============================
+# MAIN LAYOUT
+# ==============================
+left, right = st.columns([3,1])
 
-        # TIME
-        try:
-            if isinstance(selected_article["published"], str):
-                news_time = parse_time(selected_article["published"])
-            else:
-                news_time = selected_article["published"]
+chart_placeholder = left.empty()
+news_placeholder = right.empty()
 
-            news_time = pd.to_datetime(news_time).tz_localize(None)
-        except:
-            st.write("Time parsing failed")
-            news_time = None
+# ==============================
+# LIVE LOOP
+# ==============================
+while True:
 
-        # AI CLASSIFICATION
-        if news_time is not None:
-            embedding = model.encode(selected_article["title"], convert_to_tensor=True)
+    df = get_data(ticker, TIMEFRAME_MAP[timeframe])
 
-            scores = {}
-            for key, emb in profiles.items():
-                scores[key] = util.cos_sim(emb, embedding).item()
+    if df is None or df.empty:
+        chart_placeholder.warning("No data - check symbol name (e.g. TSLA.US)")
+        time.sleep(2)
+        continue
 
-            best_category = max(scores, key=scores.get)
-            best_score = scores[best_category]
+    start = df['time'].min()
+    end = df['time'].max()
 
-            st.write(f"**Category:** {best_category} ({round(best_score,2)})")
+    news = get_news(f"{ticker} stock")
+    news = filter_news(news, start, end)
 
-            # IMPACT
-            impact = calculate_impact(data, time_col, news_time)
+    fig = build_chart(df, news)
 
-            st.write("### 📊 Impact")
+    # UPDATE CHART
+    with chart_placeholder:
+        st.plotly_chart(fig, use_container_width=True)
 
-            if impact:
-                for k, v in impact.items():
-                    if v is not None:
-                        st.write(f"{k}: {v:.3f}%")
-                    else:
-                        st.write(f"{k}: No data")
-            else:
-                st.write("No price data available")
-else:
-    st.write("No news found")
+    # UPDATE NEWS PANEL
+    with news_placeholder:
+        st.subheader("📰 News in Timeframe")
+
+        if news:
+            for art in news[:10]:
+                st.markdown(f"**{art['title']}**")
+                st.caption(art["published"])
+                st.markdown(f"[Read]({art['link']})")
+                st.divider()
+        else:
+            st.write("No news in this timeframe")
+
+    if not live:
+        break
+
+    time.sleep(2)
