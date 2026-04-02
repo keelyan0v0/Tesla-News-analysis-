@@ -110,6 +110,7 @@ def get_data(symbol, timeframe, lookback_delta):
         timeframe=timeframe,
         start=start,
         end=end,
+        feed="iex",
         limit=1000  # 🔥 important safety
     )
 
