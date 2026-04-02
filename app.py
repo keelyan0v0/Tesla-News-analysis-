@@ -15,8 +15,8 @@ from sentence_transformers import SentenceTransformer, util
 # ==============================
 # CONFIG
 # ==============================
-API_KEY = "YOUR_API_KEY"
-SECRET_KEY = "YOUR_SECRET_KEY"
+API_KEY = "PKNNUMQRVO2V5Q7HUKC46GFKVR"
+SECRET_KEY = "CyYqXHDoq2tkrmQDG5Gs1SjdrqJFbAYJ7FUq5gnRTVcM"
 
 client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 
