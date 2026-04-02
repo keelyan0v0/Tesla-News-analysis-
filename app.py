@@ -92,16 +92,31 @@ def get_data(symbol, timeframe):
     bars = bars.reset_index()
     bars.rename(columns={"timestamp": "time"}, inplace=True)
 
+    bars['time'] = pd.to_datetime(bars['time']).dt.tz_localize(None)
+
     return bars
 
 # ==============================
 # FILTER NEWS
 # ==============================
 def filter_news(news, start, end):
-    return [
-        art for art in news
-        if start <= art["published"] <= end
-    ][:30]
+    # Convert dataframe times to timezone-naive
+    start = pd.to_datetime(start).tz_localize(None)
+    end = pd.to_datetime(end).tz_localize(None)
+
+    filtered = []
+
+    for art in news:
+        try:
+            t = pd.to_datetime(art["published"]).tz_localize(None)
+
+            if start <= t <= end:
+                filtered.append(art)
+
+        except:
+            continue
+
+    return filtered[:30]
 
 # ==============================
 # CHART
